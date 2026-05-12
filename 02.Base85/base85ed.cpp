@@ -1,117 +1,140 @@
-#include <vector>
+#include <algorithm>
+#include <array>
 #include <cstdint>
-#include <string>
+#include <limits>
 #include <stdexcept>
-#include <cstring>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <errno.h>
+#include <vector>
 
 #include "base85ed.h"
 
-// TODO: remove this
-static std::vector<uint8_t> run_command_io(const std::string &command,
-        const std::vector<uint8_t> &in)
+namespace
 {
-    int inpipe[2];   // parent -> child
-    int outpipe[2];  // child -> parent
 
-    if (pipe(inpipe) == -1) throw std::runtime_error(strerror(errno));
-    if (pipe(outpipe) == -1)
+constexpr std::array<char, 85> ALPHABET =
+{
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+    'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd',
+    'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+    'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
+    'y', 'z', '!', '#', '$', '%', '&', '(', ')', '*',
+    '+', '-', ';', '<', '=', '>', '?', '@', '^', '_',
+    '`', '{', '|', '}', '~'
+};
+
+std::array<int8_t, 256> make_decode_table()
+{
+    std::array<int8_t, 256> table {};
+    table.fill(-1);
+
+    for (size_t i = 0; i < ALPHABET.size(); ++i)
     {
-        close(inpipe[0]);
-        close(inpipe[1]);
-        throw std::runtime_error(strerror(errno));
+        table[static_cast<uint8_t>(ALPHABET[i])] = static_cast<int8_t>(i);
     }
 
-    pid_t pid = fork();
-    if (pid == -1)
-    {
-        close(inpipe[0]);
-        close(inpipe[1]);
-        close(outpipe[0]);
-        close(outpipe[1]);
-        throw std::runtime_error(strerror(errno));
-    }
-
-    if (pid == 0)
-    {
-        // child
-        dup2(inpipe[0], STDIN_FILENO);
-        dup2(outpipe[1], STDOUT_FILENO);
-        close(inpipe[0]);
-        close(inpipe[1]);
-        close(outpipe[0]);
-        close(outpipe[1]);
-        execl("/bin/sh", "sh", "-c", command.c_str(), (char*)nullptr);
-        _exit(127);
-    }
-
-    // parent
-    close(inpipe[0]);
-    close(outpipe[1]);
-
-    // write input
-    const uint8_t *wp = in.data();
-    ssize_t remaining = static_cast<ssize_t>(in.size());
-    while (remaining > 0)
-    {
-        ssize_t n = write(inpipe[1], wp, remaining);
-        if (n == -1)
-        {
-            if (errno == EINTR) continue;
-            close(inpipe[1]);
-            close(outpipe[0]);
-            waitpid(pid, nullptr, 0);
-            throw std::runtime_error(strerror(errno));
-        }
-        remaining -= n;
-        wp += n;
-    }
-    close(inpipe[1]); // signal EOF
-
-    // read all stdout
-    std::vector<uint8_t> out;
-    uint8_t buf[4096];
-    while (true)
-    {
-        ssize_t n = read(outpipe[0], buf, sizeof(buf));
-        if (n > 0) out.insert(out.end(), buf, buf + n);
-        else if (n == 0) break;
-        else
-        {
-            if (errno == EINTR) continue;
-            close(outpipe[0]);
-            waitpid(pid, nullptr, 0);
-            throw std::runtime_error(strerror(errno));
-        }
-    }
-    close(outpipe[0]);
-
-    int status = 0;
-    if (waitpid(pid, &status, 0) == -1) throw std::runtime_error(strerror(errno));
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-        throw std::runtime_error("child exited with non-zero status");
-
-    return out;
+    return table;
 }
 
+uint32_t read_hunk(uint8_t const *bytes, size_t length)
+{
+    uint32_t value = 0;
 
-// TODO: implement this in C++
+    for (size_t i = 0; i < 4; ++i)
+    {
+        value <<= 8U;
+        if (i < length)
+        {
+            value |= bytes[i];
+        }
+    }
+
+    return value;
+}
+
+void append_uint32_bytes(std::vector<uint8_t> &out, uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>((value >> 24U) & 0xffU));
+    out.push_back(static_cast<uint8_t>((value >> 16U) & 0xffU));
+    out.push_back(static_cast<uint8_t>((value >> 8U) & 0xffU));
+    out.push_back(static_cast<uint8_t>(value & 0xffU));
+}
+
+} // namespace
+
 std::vector<uint8_t> base85::encode(std::vector<uint8_t> const &bytes)
 {
-    return run_command_io(
-               "/usr/bin/env -S python3 -c 'import sys; import base64; sys.stdout.buffer.write(base64.b85encode(sys.stdin.buffer.read()))'",
-               bytes
-           );
+    if (bytes.empty())
+    {
+        return {};
+    }
+
+    std::vector<uint8_t> encoded;
+    encoded.reserve(((bytes.size() + 3U) / 4U) * 5U);
+
+    for (size_t offset = 0; offset < bytes.size(); offset += 4U)
+    {
+        const size_t hunk_size = std::min<size_t>(4U, bytes.size() - offset);
+        uint32_t value = read_hunk(bytes.data() + offset, hunk_size);
+
+        std::array<uint8_t, 5> hunk {};
+        for (size_t i = hunk.size(); i > 0U; --i)
+        {
+            hunk[i - 1U] = static_cast<uint8_t>(ALPHABET[value % 85U]);
+            value /= 85U;
+        }
+
+        const size_t encoded_size = hunk_size == 4U ? 5U : hunk_size + 1U;
+        encoded.insert(encoded.end(), hunk.begin(), hunk.begin() + encoded_size);
+    }
+
+    return encoded;
 }
 
-
-// TODO: implement this in C++
 std::vector<uint8_t> base85::decode(std::vector<uint8_t> const &b85str)
 {
-    return run_command_io(
-               "/usr/bin/env -S python3 -c 'import sys; import base64; sys.stdout.buffer.write(base64.b85decode(sys.stdin.buffer.read()))'",
-               b85str
-           );
+    if (b85str.empty())
+    {
+        return {};
+    }
+
+    static const std::array<int8_t, 256> decode_table = make_decode_table();
+
+    std::vector<uint8_t> decoded;
+    decoded.reserve((b85str.size() / 5U) * 4U + 4U);
+
+    for (size_t offset = 0; offset < b85str.size(); offset += 5U)
+    {
+        const size_t hunk_size = std::min<size_t>(5U, b85str.size() - offset);
+        uint64_t value = 0;
+
+        for (size_t i = 0; i < 5U; ++i)
+        {
+            int8_t digit = 84;
+            if (i < hunk_size)
+            {
+                digit = decode_table[b85str[offset + i]];
+                if (digit < 0)
+                {
+                    throw std::invalid_argument("bad base85 character");
+                }
+            }
+
+            value = value * 85U + static_cast<uint8_t>(digit);
+        }
+
+        if (value > std::numeric_limits<uint32_t>::max())
+        {
+            throw std::overflow_error("base85 overflow");
+        }
+
+        append_uint32_bytes(decoded, static_cast<uint32_t>(value));
+
+        if (hunk_size < 5U)
+        {
+            decoded.resize(decoded.size() - (5U - hunk_size));
+        }
+    }
+
+    return decoded;
 }
