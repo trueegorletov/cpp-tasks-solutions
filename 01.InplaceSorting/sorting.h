@@ -44,40 +44,46 @@ void bubble_sort(Iterator begin, Iterator end)
 template <typename Iterator>
 void quick_sort(Iterator begin, Iterator end)
 {
-    const auto size = end - begin;
-    if (size < 2)
+    while (end - begin > 1)
     {
-        return;
-    }
+        const auto size = end - begin;
+        const auto pivot = *(begin + size / 2);
+        Iterator less_end = begin;
+        Iterator current = begin;
+        Iterator greater_begin = end;
 
-    const auto pivot = *(begin + size / 2);
-    Iterator less_end = begin;
-    Iterator current = begin;
-    Iterator greater_begin = end;
-
-    while (current < greater_begin)
-    {
-        if (*current < pivot)
+        while (current < greater_begin)
         {
-            using std::swap;
-            swap(*less_end, *current);
-            ++less_end;
-            ++current;
+            if (*current < pivot)
+            {
+                using std::swap;
+                swap(*less_end, *current);
+                ++less_end;
+                ++current;
+            }
+            else if (pivot < *current)
+            {
+                --greater_begin;
+                using std::swap;
+                swap(*current, *greater_begin);
+            }
+            else
+            {
+                ++current;
+            }
         }
-        else if (pivot < *current)
+
+        if (less_end - begin < end - greater_begin)
         {
-            --greater_begin;
-            using std::swap;
-            swap(*current, *greater_begin);
+            quick_sort(begin, less_end);
+            begin = greater_begin;
         }
         else
         {
-            ++current;
+            quick_sort(greater_begin, end);
+            end = less_end;
         }
     }
-
-    quick_sort(begin, less_end);
-    quick_sort(greater_begin, end);
 }
 
 #endif // SORTING_H

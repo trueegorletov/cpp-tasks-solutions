@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <functional>
+#include <numeric>
+#include <random>
 #include <vector>
 
 #include "sorting.h"
@@ -33,8 +35,23 @@ TEST_P(SortingTest, SortsCommonIntegerCases)
     assert_sorts({3, 1, 2});
     assert_sorts({5, 4, 3, 2, 1});
     assert_sorts({1, 2, 3, 4, 5});
+    assert_sorts({7, 7, 7, 7, 7});
     assert_sorts({4, 1, 4, 2, 4, 3, 1});
     assert_sorts({0, -5, 8, -1, 3, 3, -5});
+}
+
+TEST_P(SortingTest, SortsLargerDeterministicInputs)
+{
+    std::vector<int> data(256);
+    std::iota(data.begin(), data.end(), -128);
+    std::shuffle(data.begin(), data.end(), std::mt19937 {42});
+    assert_sorts(data);
+
+    for (auto& value : data)
+    {
+        value %= 17;
+    }
+    assert_sorts(data);
 }
 
 TEST_P(SortingTest, SortsSubrangeInPlace)
