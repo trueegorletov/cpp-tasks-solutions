@@ -4,7 +4,7 @@ status=true
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
-dd bs=512 count=1 if=/dev/random of="$tmpdir/random.bin" 2>/dev/null
+dd bs=513 count=1 if=/dev/urandom of="$tmpdir/random.bin" 2>/dev/null
 python3 -c 'import sys; import base64; sys.stdout.buffer.write(base64.b85encode(sys.stdin.buffer.read()))' <"$tmpdir/random.bin" >"$tmpdir/random.b85"
 
 # ---------------------------------------------------
