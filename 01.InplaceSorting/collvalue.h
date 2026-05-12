@@ -3,6 +3,9 @@
 
 // Header-only
 
+#include <cstddef>
+#include <utility>
+
 template <typename T> class CollectingValue
 {
 public:
